@@ -1,43 +1,78 @@
 import sys
+from datetime import datetime
+import mysql-connector
 
-#------------------------ # PYTHON BANKING SYSTEM #------------------------ 
-name = input("Enter your name: ")
+# -------------------------------------------------------------
+# DATABASE CONNECTION SETUP
+# -------------------------------------------------------------
+try:
+    db = mysql_connector.connect(
+        host="localhost",
+        user="root",  # Replace with your MySQL username
+        password="your_password",  # Replace with your MySQL password
+        database="bank_schema",
+    )
+    cursor = db.cursor()
+except mysql_connector.Error as err:
+    print(f"Database Connection Error: {err}")
+    sys.exit()
 
-# PIN CREATION
-while True:
-    pin = input("Set a 4-digit PIN: ")
-    if pin.isdigit() and len(pin) == 4:
-        break
-    else:
-        print("Invalid PIN. PIN must be exactly 4 digits. \n")
+# -------------------------------------------------------------
+# DYNAMIC LOGIN SYSTEM
+# -------------------------------------------------------------
+print("=" * 50)
+print("          WELCOME TO PYTHON BANKING SYSTEM")
+print("=" * 50)
 
-# LOGIN SYSTEM
 attempts = 3
 authenticated = False
+account_data = None
 
 while attempts > 0:
-    entered_pin = input("Enter PIN to login: ")
-    if entered_pin == pin:
-        print("\nLogin Successful!")
+    username = input("Enter Username: ").strip()
+    entered_pin = input("Enter 4-digit Card PIN: ").strip()
+
+    # Query to authenticate based on username, active account, and card PIN
+    query = """
+        SELECT c.f_name, c.l_name, ba.acc_num, ba.balance
+        FROM login_account la
+        JOIN bank_account ba ON la.login_id = ba.login_id
+        JOIN client c ON ba.client_id = c.client_id
+        JOIN card cd ON ba.card_num = cd.card_num
+        WHERE la.username = %s AND cd.Pin_code = %s AND ba.status = 1
+    """
+
+    cursor.execute(query, (username, entered_pin))
+    account_data = cursor.fetchone()
+
+    if account_data:
+        # account_data structure: (f_name, l_name, acc_num, balance)
+        name = f"{account_data[0]} {account_data[1]}"
+        acc_num = account_data[2]
+        balance = account_data[3]
+        print(f"\nLogin Successful! Welcome back, {name}.")
+        print(f"Linked Account Number: {acc_num}")
         authenticated = True
         break
     else:
         attempts -= 1
         if attempts > 0:
-            print(f"Incorrect PIN! You have {attempts} attempts left.\n")
+            print(
+                f"Invalid credentials or inactive card! {attempts} attempts left.\n"
+            )
 
 if not authenticated:
     print("Too many incorrect attempts. Access locked.")
+    cursor.close()
+    db.close()
     sys.exit()
 
-# ACCOUNT DATA
-balance = 0
-history = []
-
-# MAIN MENU
+# -------------------------------------------------------------
+# MAIN APPLICATION MENU
+# -------------------------------------------------------------
 while True:
     print("\n" + "=" * 50)
-    print("             PYTHON BANKING SYSTEM")
+    print(f"             BANKING MENU (Acc: {acc_num})")
     print("=" * 50)
     print("1. Deposit")
     print("2. Withdraw")
@@ -45,25 +80,46 @@ while True:
     print("4. Transaction History")
     print("5. Transfer Money")
     print("6. Exit")
-    
+
     choice = input("Choose an option: ")
-    
-    # DEPOSIT
+
+    # 1. DEPOSIT
     if choice == "1":
         amount = input("Enter amount to deposit: ")
         if amount.isdigit():
             amount = int(amount)
             if amount > 0:
+                # Update local variable and database balance
                 balance += amount
-                history.append(f"Deposited {amount}")
-                print(f"{amount} deposited successfully!")
+                cursor.execute(
+                    "UPDATE bank_account SET balance = %s WHERE acc_num = %s",
+                    (balance, acc_num),
+                )
+
+                # Log to transaction_history table
+                log_query = """
+                    INSERT INTO transaction_history (amount, type, date, time, account_num) 
+                    VALUES (%s, 'deposit', %s, %s, %s)
+                """
+                cursor.execute(
+                    log_query,
+                    (
+                        amount,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        datetime.now().strftime("%H:%M:%S"),
+                        acc_num,
+                    ),
+                )
+
+                db.commit()
+                print(f"\n{amount} deposited successfully!")
                 print(f"New Balance: {balance}")
             else:
                 print("Amount must be greater than zero.")
         else:
             print("Invalid amount!")
-            
-    # WITHDRAW
+
+    # 2. WITHDRAW
     elif choice == "2":
         amount = input("Enter amount to withdraw: ")
         if amount.isdigit():
@@ -74,54 +130,147 @@ while True:
                 print("Insufficient Balance!")
             else:
                 balance -= amount
-                history.append(f"Withdrew {amount}")
-                print(f"{amount} withdrawal successful!")
+                cursor.execute(
+                    "UPDATE bank_account SET balance = %s WHERE acc_num = %s",
+                    (balance, acc_num),
+                )
+
+                # Log transaction
+                log_query = """
+                    INSERT INTO transaction_history (amount, type, date, time, account_num) 
+                    VALUES (%s, 'withdraw', %s, %s, %s)
+                """
+                cursor.execute(
+                    log_query,
+                    (
+                        amount,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        datetime.now().strftime("%H:%M:%S"),
+                        acc_num,
+                    ),
+                )
+
+                db.commit()
+                print(f"\n{amount} withdrawal successful!")
                 print(f"New Balance: {balance}")
         else:
             print("Invalid amount!")
-            
-    # SHOW BALANCE
+
+    # 3. SHOW BALANCE
     elif choice == "3":
+        # Fetch fresh data from DB to reflect external changes if any
+        cursor.execute(
+            "SELECT balance FROM bank_account WHERE acc_num = %s", (acc_num,)
+        )
+        balance = cursor.fetchone()[0]
+
         print("\n----- ACCOUNT DETAILS -----")
         print("Account Holder:", name)
+        print("Account Number:", acc_num)
         print("Balance       :", balance)
-        
-    # TRANSACTION HISTORY
+
+    # 4. TRANSACTION HISTORY
     elif choice == "4":
         print("\n----- TRANSACTION HISTORY -----")
-        if len(history) == 0:
+        cursor.execute(
+            "SELECT type, amount, date, time, recv_acc_num FROM transaction_history WHERE account_num = %s",
+            (acc_num,),
+        )
+        rows = cursor.fetchall()
+
+        if not rows:
             print("No transactions found.")
         else:
-            for i, transaction in enumerate(history, start=1):
-                print(f"{i}. {transaction}")
-                
-    # TRANSFER
-    elif choice == "5":
-        recipient = input("Enter recipient's name: ").strip()
-        if not recipient:
-            print("Recipient name cannot be empty.")
-        else:
-            amount = input(f"Enter amount to transfer to {recipient}: ")
-            if amount.isdigit():
-                amount = int(amount)
-                if amount <= 0:
-                    print("Amount must be greater than zero.")
-                elif amount > balance:
-                    print("Insufficient Balance for this transfer!")
+            for i, row in enumerate(rows, start=1):
+                t_type, t_amt, t_date, t_time, r_acc = row
+                if t_type == "transfer":
+                    print(
+                        f"{i}. {t_date} {t_time} - {t_type.capitalize()} of {t_amt} to Acc #{r_acc}"
+                    )
                 else:
-                    balance -= amount
-                    history.append(f"Transferred {amount} to {recipient}")
-                    print(f"Successfully transferred {amount} to {recipient}!")
-                    print(f"New Balance: {balance}")
-            else:
-                print("Invalid amount!")
+                    print(
+                        f"{i}. {t_date} {t_time} - {t_type.capitalize()} of {t_amt}"
+                    )
 
-    # EXIT
+    # 5. TRANSFER
+    elif choice == "5":
+        target_acc = input("Enter recipient's Account Number: ").strip()
+        if not target_acc.isdigit():
+            print("Invalid account number format.")
+        else:
+            target_acc = int(target_acc)
+            if target_acc == acc_num:
+                print("You cannot transfer money to your own account.")
+                continue
+
+            # Verify recipient exists
+            cursor.execute(
+                "SELECT balance FROM bank_account WHERE acc_num = %s AND status = 1",
+                (target_acc,),
+            )
+            recipient_data = cursor.fetchone()
+
+            if not recipient_data:
+                print("Recipient account number not found or inactive.")
+            else:
+                amount = input(
+                    f"Enter amount to transfer to Account #{target_acc}: "
+                )
+                if amount.isdigit():
+                    amount = int(amount)
+                    if amount <= 0:
+                        print("Amount must be greater than zero.")
+                    elif amount > balance:
+                        print("Insufficient Balance for this transfer!")
+                    else:
+                        recipient_balance = recipient_data[0]
+
+                        # Deduct from sender, add to receiver
+                        balance -= amount
+                        recipient_balance += amount
+
+                        cursor.execute(
+                            "UPDATE bank_account SET balance = %s WHERE acc_num = %s",
+                            (balance, acc_num),
+                        )
+                        cursor.execute(
+                            "UPDATE bank_account SET balance = %s WHERE acc_num = %s",
+                            (recipient_balance, target_acc),
+                        )
+
+                        # Log transfer record
+                        log_query = """
+                            INSERT INTO transaction_history (amount, type, date, time, account_num, recv_acc_num) 
+                            VALUES (%s, 'transfer', %s, %s, %s, %s)
+                        """
+                        cursor.execute(
+                            log_query,
+                            (
+                                amount,
+                                datetime.now().strftime("%Y-%m-%d"),
+                                datetime.now().strftime("%H:%M:%S"),
+                                acc_num,
+                                target_acc,
+                            ),
+                        )
+
+                        db.commit()
+                        print(
+                            f"\nSuccessfully transferred {amount} to Account #{target_acc}!"
+                        )
+                        print(f"New Balance: {balance}")
+                else:
+                    print("Invalid amount!")
+
+    # 6. EXIT
     elif choice == "6":
         print("\nThank You For Banking With Us!")
         print("Have a Great Day!")
         break
-        
-    # INVALID CHOICE
+
     else:
         print("Invalid choice! Please select a valid option.")
+
+# Cleanup database resources
+cursor.close()
+db.close()
