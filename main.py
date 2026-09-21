@@ -1,6 +1,7 @@
 import sys
-from datetime import datetime
 import mysql.connector
+# Import the decoupled transaction history module
+import history_logger 
 
 # -------------------------------------------------------------
 # DATABASE CONNECTION SETUP
@@ -8,7 +9,7 @@ import mysql.connector
 try:
     db = mysql.connector.connect(
         host="localhost",
-        user="root",          # Change to your MySQL user
+        user="root",               # Change to your MySQL user
         password="your_password",  # Change to your MySQL password
         database="bank_schema"
     )
@@ -32,7 +33,6 @@ while attempts > 0:
     username = input("Enter Username: ").strip()
     entered_pin = input("Enter 4-digit Card PIN: ").strip()
 
-    # Authentication validation against Database
     query = """
         SELECT c.f_name, c.l_name, ba.acc_num, ba.balance
         FROM login_account la
@@ -41,7 +41,6 @@ while attempts > 0:
         JOIN card cd ON ba.card_num = cd.card_num
         WHERE la.username = %s AND cd.Pin_code = %s AND ba.status = 1
     """
-    
     cursor.execute(query, (username, entered_pin))
     account_data = cursor.fetchone()
 
@@ -89,11 +88,8 @@ while True:
                 balance += amount
                 cursor.execute("UPDATE bank_account SET balance = %s WHERE acc_num = %s", (balance, acc_num))
                 
-                log_query = """
-                    INSERT INTO transaction_history (amount, type, date, time, account_num) 
-                    VALUES (%s, 'deposit', %s, %s, %s)
-                """
-                cursor.execute(log_query, (amount, datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), acc_num))
+                # Using the imported history module
+                history_logger.log_transaction(cursor, acc_num, amount, 'deposit')
                 
                 db.commit()
                 print(f"\n{amount} deposited successfully!")
@@ -116,11 +112,8 @@ while True:
                 balance -= amount
                 cursor.execute("UPDATE bank_account SET balance = %s WHERE acc_num = %s", (balance, acc_num))
                 
-                log_query = """
-                    INSERT INTO transaction_history (amount, type, date, time, account_num) 
-                    VALUES (%s, 'withdraw', %s, %s, %s)
-                """
-                cursor.execute(log_query, (amount, datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), acc_num))
+                # Using the imported history module
+                history_logger.log_transaction(cursor, acc_num, amount, 'withdraw')
                 
                 db.commit()
                 print(f"\n{amount} withdrawal successful!")
@@ -140,19 +133,8 @@ while True:
         
     # 4. TRANSACTION HISTORY
     elif choice == "4":
-        print("\n----- TRANSACTION HISTORY -----")
-        cursor.execute("SELECT type, amount, date, time, recv_acc_num FROM transaction_history WHERE account_num = %s", (acc_num,))
-        rows = cursor.fetchall()
-        
-        if not rows:
-            print("No transactions found.")
-        else:
-            for i, row in enumerate(rows, start=1):
-                t_type, t_amt, t_date, t_time, r_acc = row
-                if t_type == 'transfer':
-                    print(f"{i}. {t_date} {t_time} - {t_type.capitalize()} of {t_amt} to Acc #{r_acc}")
-                else:
-                    print(f"{i}. {t_date} {t_time} - {t_type.capitalize()} of {t_amt}")
+        # Using the imported history module to print history
+        history_logger.show_transaction_history(cursor, acc_num)
                 
     # 5. TRANSFER
     elif choice == "5":
@@ -187,11 +169,8 @@ while True:
                         cursor.execute("UPDATE bank_account SET balance = %s WHERE acc_num = %s", (balance, acc_num))
                         cursor.execute("UPDATE bank_account SET balance = %s WHERE acc_num = %s", (recipient_balance, target_acc))
                         
-                        log_query = """
-                            INSERT INTO transaction_history (amount, type, date, time, account_num, recv_acc_num) 
-                            VALUES (%s, 'transfer', %s, %s, %s, %s)
-                        """
-                        cursor.execute(log_query, (amount, datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), acc_num, target_acc))
+                        # Using the imported history module to log the bank transfer
+                        history_logger.log_transaction(cursor, acc_num, amount, 'transfer', recv_acc=target_acc)
                         
                         db.commit()
                         print(f"\nSuccessfully transferred {amount} to Account #{target_acc}!")
